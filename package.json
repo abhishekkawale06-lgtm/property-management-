@@ -1,0 +1,15 @@
+{
+  "name": "property-management",
+  "version": "1.0.0",
+  "description": "Property & PG Management System",
+  "scripts": {
+    "start": "python3 server.py",
+    "dev": "python3 server.py"
+  },
+  "keywords": [
+    "property-management",
+    "pg-manager"
+  ],
+  "author": "",
+  "license": "ISC"
+}

@@ -1,41 +1,69 @@
+// PG Manager - Centralized API State Manager
+
 class StateManager {
     constructor() {
+        this.selectedPropertyId = 'all'; // 'all' or propertyId
         this.state = {
-            properties: [], rooms: [], beds: [], residents: [],
-            payments: [], complaints: [], expenses: [], settings: {}
+            properties: [],
+            rooms: [],
+            beds: [],
+            residents: [],
+            leads: [],
+            payments: [],
+            complaints: [],
+            expenses: [],
+            staff: [],
+            notices: [],
+            notifications: [],
+            settings: {},
+            analytics: null
         };
         this.loaded = false;
     }
 
-    async loadState() {
+    async loadState(propertyId = this.selectedPropertyId) {
+        this.selectedPropertyId = propertyId || 'all';
+        const pParam = this.selectedPropertyId !== 'all' ? `?propertyId=${this.selectedPropertyId}` : '';
+
         try {
-            const [propRes, roomRes, bedRes, resRes, payRes, compRes, expRes, setRes, notifRes] = await Promise.all([
+            const [
+                propRes, roomRes, bedRes, resRes, leadRes,
+                payRes, compRes, expRes, staffRes, notRes, notifRes, setRes, analRes
+            ] = await Promise.all([
                 fetch('/api/properties'),
-                fetch('/api/rooms'),
-                fetch('/api/beds'),
-                fetch('/api/residents'),
-                fetch('/api/payments'),
-                fetch('/api/complaints'),
-                fetch('/api/expenses'),
+                fetch(`/api/rooms${pParam}`),
+                fetch(`/api/beds${pParam}`),
+                fetch(`/api/residents${pParam}`),
+                fetch(`/api/leads${pParam}`),
+                fetch(`/api/payments${pParam}`),
+                fetch(`/api/complaints${pParam}`),
+                fetch(`/api/expenses${pParam}`),
+                fetch(`/api/staff${pParam}`),
+                fetch(`/api/notices${pParam}`),
+                fetch(`/api/notifications${pParam}`),
                 fetch('/api/settings'),
-                fetch('/api/notifications')
+                fetch(`/api/analytics/summary${pParam}`)
             ]);
-            
+
             this.state.properties = await propRes.json();
             this.state.rooms = await roomRes.json();
             this.state.beds = await bedRes.json();
             this.state.residents = await resRes.json();
+            this.state.leads = await leadRes.json();
             this.state.payments = await payRes.json();
             this.state.complaints = await compRes.json();
             this.state.expenses = await expRes.json();
-            this.state.settings = await setRes.json();
+            this.state.staff = await staffRes.json();
+            this.state.notices = await notRes.json();
             this.state.notifications = await notifRes.json();
-            
+            this.state.settings = await setRes.json();
+            this.state.analytics = await analRes.json();
+
             this.loaded = true;
-            window.dispatchEvent(new Event('stateChanged'));
+            window.dispatchEvent(new CustomEvent('stateChanged', { detail: { propertyId: this.selectedPropertyId } }));
+            return this.state;
         } catch (e) {
             console.error("Failed to load state from API:", e);
-            alert("Could not connect to backend server!");
         }
     }
 
@@ -43,55 +71,239 @@ class StateManager {
         return this.state[collection] || [];
     }
 
-    getRoomDetails(roomId) {
-        return this.state.rooms.find(r => r.id === roomId);
-    }
-    
-    getBedDetails(bedId) {
-        const bed = this.state.beds.find(b => b.id === bedId);
-        if (!bed) return null;
-        const room = this.state.rooms.find(r => r.id === bed.roomId);
-        const prop = this.state.properties.find(p => p.id === bed.propertyId);
-        return { ...bed, room, property: prop };
-    }
-    
-    getResidentDetails(resId) {
-        const res = this.state.residents.find(r => r.id === resId);
-        if (!res) return null;
-        const bed = res.bedId ? this.getBedDetails(res.bedId) : null;
-        return { ...res, bedDetails: bed };
+    // --- Property Methods ---
+    async addProperty(data) {
+        const res = await fetch('/api/properties', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
     }
 
-    async addExpense(date, category, desc, amount) {
-        await fetch('/api/expenses', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ date, category, description: desc, amount: parseInt(amount) })
-        });
-        await this.loadState();
-    }
-    
-    async updateSettings(ownerName, email, phone) {
-        await fetch('/api/settings', {
+    async updateProperty(id, data) {
+        const res = await fetch(`/api/properties/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ownerName, email, phone })
+            body: JSON.stringify(data)
         });
         await this.loadState();
+        return await res.json();
     }
-    
-    async resetApp() {
-        await fetch('/api/settings/reset', { method: 'POST' });
+
+    async deleteProperty(id) {
+        const res = await fetch(`/api/properties/${id}`, { method: 'DELETE' });
         await this.loadState();
+        return await res.json();
     }
-    
-    async addProperty(name, address, rooms, totalBeds) {
-        await fetch('/api/properties', {
+
+    // --- Room & Bed Methods ---
+    async addRoom(data) {
+        const res = await fetch('/api/rooms', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, address, rooms: parseInt(rooms), totalBeds: parseInt(totalBeds) })
+            body: JSON.stringify(data)
         });
+        const result = await res.json();
         await this.loadState();
+        return result;
+    }
+
+    async updateBedStatus(bedId, status) {
+        const res = await fetch(`/api/beds/${bedId}/status`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status })
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    // --- Resident & KYC Methods ---
+    async addResident(data) {
+        const res = await fetch('/api/residents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Failed to onboard resident');
+        await this.loadState();
+        return result;
+    }
+
+    async updateResident(id, data) {
+        const res = await fetch(`/api/residents/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    async transferResident(id, roomId, bedId) {
+        const res = await fetch(`/api/residents/${id}/transfer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomId, bedId })
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Failed to transfer room/bed');
+        await this.loadState();
+        return result;
+    }
+
+    async checkoutResident(id, checkoutData) {
+        const res = await fetch(`/api/residents/${id}/checkout`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(checkoutData)
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Failed to complete checkout');
+        await this.loadState();
+        return result;
+    }
+
+    // --- Lead Methods ---
+    async addLead(data) {
+        const res = await fetch('/api/leads', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    async updateLead(id, data) {
+        const res = await fetch(`/api/leads/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    async convertLead(id, data) {
+        const res = await fetch(`/api/leads/${id}/convert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Failed to convert lead to resident');
+        await this.loadState();
+        return result;
+    }
+
+    // --- Payment Methods ---
+    async recordPayment(paymentId, amountPaid, paymentMode, referenceNumber, notes) {
+        const res = await fetch('/api/payments/record', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentId, amountPaid: parseInt(amountPaid), paymentMode, referenceNumber, notes })
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Failed to record payment');
+        await this.loadState();
+        return result;
+    }
+
+    async generateMonthRent(month) {
+        const res = await fetch('/api/payments/generate-month', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ month })
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    // --- Complaints Methods ---
+    async addComplaint(data) {
+        const res = await fetch('/api/complaints', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    async updateComplaint(id, data) {
+        const res = await fetch(`/api/complaints/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    // --- Expenses Methods ---
+    async addExpense(data) {
+        const res = await fetch('/api/expenses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    // --- Staff & Notices ---
+    async addStaff(data) {
+        const res = await fetch('/api/staff', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    async addNotice(data) {
+        const res = await fetch('/api/notices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    // --- Settings & Reset ---
+    async updateSettings(data) {
+        const res = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        await this.loadState();
+        return result;
+    }
+
+    async resetApp() {
+        const res = await fetch('/api/settings/reset', { method: 'POST' });
+        const result = await res.json();
+        await this.loadState();
+        return result;
     }
 }
 
