@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PG Management Dashboard</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Main Styles -->
+    <link rel="stylesheet" href="styles.css?v=2">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js for reports (using CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i data-lucide="building-2"></i>
+                    <span>Property Manager</span>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <ul id="nav-list">
+                    <li><a href="#" class="nav-item active" data-view="dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a></li>
+                    <li><a href="#" class="nav-item" data-view="properties"><i data-lucide="home"></i> Properties</a></li>
+                    <li><a href="#" class="nav-item" data-view="collections"><i data-lucide="indian-rupee"></i> Collections</a></li>
+                    <li><a href="#" class="nav-item" data-view="expenses"><i data-lucide="receipt"></i> Expenses</a></li>
+                    <li><a href="#" class="nav-item" data-view="notifications"><i data-lucide="bell"></i> Notifications</a></li>
+                    <li><a href="#" class="nav-item" data-view="settings"><i data-lucide="settings"></i> Settings</a></li>
+                </ul>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-profile">
+                    <div class="avatar">OM</div>
+                    <div class="user-info">
+                        <span class="user-name">Owner Manager</span>
+                        <span class="user-role">Admin</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Topbar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <h1 id="page-title">Dashboard</h1>
+                </div>
+                <div class="topbar-right">
+                    <button class="icon-btn"><i data-lucide="bell"></i></button>
+                </div>
+            </header>
+
+            <!-- Dynamic Views Container -->
+            <div id="view-container" class="view-container">
+                <!-- Content will be injected here by app.js -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals Container -->
+    <div id="modal-container"></div>
+
+    <!-- Scripts -->
+    <script src="api_client.js?v=3"></script>
+    <script src="app.js?v=3"></script>
+</body>
+</html>
