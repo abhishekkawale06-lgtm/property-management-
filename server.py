@@ -46,11 +46,22 @@ def add_property():
     name = data.get('name')
     address = data.get('address')
     city = data.get('city', 'Bengaluru')
-    floors = int(data.get('floors', 1))
-    rooms = int(data.get('rooms', 0))
-    total_beds = int(data.get('totalBeds', 0))
-    security_deposit = int(data.get('securityDeposit', 10000))
-    notice_period = int(data.get('noticePeriodDays', 30))
+    pincode = data.get('pincode', '')
+    property_type = data.get('propertyType', 'PG')
+    occupancy_type = data.get('occupancyType', 'Co-living')
+    owner_name = data.get('ownerName', '')
+    owner_contact = data.get('ownerContact', '')
+    owner_email = data.get('ownerEmail', '')
+    manager_name = data.get('managerName', '')
+    manager_contact = data.get('managerContact', '')
+    floors = int(data.get('floors', 1) or 1)
+    rooms = int(data.get('rooms', 0) or 0)
+    total_beds = int(data.get('totalBeds', 0) or 0)
+    check_in_time = data.get('checkInTime', '')
+    check_out_time = data.get('checkOutTime', '')
+    rent_due_day = int(data.get('rentDueDay', 5) or 5)
+    security_deposit = int(data.get('securityDeposit', 10000) or 10000)
+    notice_period = int(data.get('noticePeriodDays', 30) or 30)
     rent_structure = data.get('rentStructure', 'Monthly Advance')
     rules = data.get('rules', 'Standard PG guidelines apply.')
 
@@ -58,11 +69,17 @@ def add_property():
         return jsonify({"error": "Property name and address are required"}), 400
 
     conn = get_db()
-    p_id = f"p_{uuid.uuid4().hex[:6]}"
+    
+    # Generate PROP-XXX ID
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM properties")
+    count = cursor.fetchone()[0]
+    p_id = f"PROP-{(count + 1):03d}"
+    
     conn.execute('''INSERT INTO properties 
-        (id, name, address, city, floors, rooms, totalBeds, securityDeposit, noticePeriodDays, rentStructure, rules, active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
-        (p_id, name, address, city, floors, rooms, total_beds, security_deposit, notice_period, rent_structure, rules))
+        (id, name, address, city, pincode, propertyType, occupancyType, ownerName, ownerContact, ownerEmail, managerName, managerContact, floors, rooms, totalBeds, checkInTime, checkOutTime, rentDueDay, securityDeposit, noticePeriodDays, rentStructure, rules, active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
+        (p_id, name, address, city, pincode, property_type, occupancy_type, owner_name, owner_contact, owner_email, manager_name, manager_contact, floors, rooms, total_beds, check_in_time, check_out_time, rent_due_day, security_deposit, notice_period, rent_structure, rules))
     conn.commit()
     conn.close()
     return jsonify({"success": True, "id": p_id})
@@ -75,14 +92,26 @@ def update_property(prop_id):
         name = COALESCE(?, name),
         address = COALESCE(?, address),
         city = COALESCE(?, city),
+        pincode = COALESCE(?, pincode),
+        propertyType = COALESCE(?, propertyType),
+        occupancyType = COALESCE(?, occupancyType),
+        ownerName = COALESCE(?, ownerName),
+        ownerContact = COALESCE(?, ownerContact),
+        ownerEmail = COALESCE(?, ownerEmail),
+        managerName = COALESCE(?, managerName),
+        managerContact = COALESCE(?, managerContact),
         floors = COALESCE(?, floors),
+        rooms = COALESCE(?, rooms),
+        totalBeds = COALESCE(?, totalBeds),
+        checkInTime = COALESCE(?, checkInTime),
+        checkOutTime = COALESCE(?, checkOutTime),
+        rentDueDay = COALESCE(?, rentDueDay),
         securityDeposit = COALESCE(?, securityDeposit),
         noticePeriodDays = COALESCE(?, noticePeriodDays),
         rentStructure = COALESCE(?, rentStructure),
         rules = COALESCE(?, rules)
         WHERE id = ?''',
-        (data.get('name'), data.get('address'), data.get('city'), data.get('floors'),
-         data.get('securityDeposit'), data.get('noticePeriodDays'), data.get('rentStructure'), data.get('rules'), prop_id))
+        (data.get('name'), data.get('address'), data.get('city'), data.get('pincode'), data.get('propertyType'), data.get('occupancyType'), data.get('ownerName'), data.get('ownerContact'), data.get('ownerEmail'), data.get('managerName'), data.get('managerContact'), data.get('floors'), data.get('rooms'), data.get('totalBeds'), data.get('checkInTime'), data.get('checkOutTime'), data.get('rentDueDay'), data.get('securityDeposit'), data.get('noticePeriodDays'), data.get('rentStructure'), data.get('rules'), prop_id))
     conn.commit()
     conn.close()
     return jsonify({"success": True})
@@ -281,14 +310,16 @@ def add_resident():
     res_id = f"res_{uuid.uuid4().hex[:8]}"
 
     # Insert Resident
+    aadhaar_number = data.get('aadhaarNumber')
+    pan_number = data.get('panNumber')
     conn.execute('''INSERT INTO residents 
         (id, name, phone, email, gender, dob, emergencyContactName, emergencyContactPhone, 
          currentAddress, propertyId, roomId, bedId, joiningDate, monthlyRent, securityDeposit, 
-         idProofType, idProofNumber, kycStatus, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')''',
+         idProofType, idProofNumber, kycStatus, status, aadhaarNumber, panNumber)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', ?, ?)''',
         (res_id, name, phone, email, gender, dob, emergency_name, emergency_phone, address,
          property_id, room_id, bed_id, joining_date, monthly_rent, security_deposit,
-         id_type, id_number, kyc_status))
+         id_type, id_number, kyc_status, aadhaar_number, pan_number))
 
     # Business Rule #2: Automatically set bed to Occupied
     conn.execute('UPDATE beds SET status = "Occupied", residentId = ? WHERE id = ?', (res_id, bed_id))
@@ -322,13 +353,15 @@ def update_resident(res_id):
         securityDeposit = COALESCE(?, securityDeposit),
         idProofType = COALESCE(?, idProofType),
         idProofNumber = COALESCE(?, idProofNumber),
+        aadhaarNumber = COALESCE(?, aadhaarNumber),
+        panNumber = COALESCE(?, panNumber),
         kycStatus = COALESCE(?, kycStatus),
         status = COALESCE(?, status)
         WHERE id = ?''',
         (data.get('name'), data.get('phone'), data.get('email'), data.get('gender'),
          data.get('dob'), data.get('emergencyContactName'), data.get('emergencyContactPhone'),
          data.get('currentAddress'), data.get('monthlyRent'), data.get('securityDeposit'),
-         data.get('idProofType'), data.get('idProofNumber'), data.get('kycStatus'),
+         data.get('idProofType'), data.get('idProofNumber'), data.get('aadhaarNumber'), data.get('panNumber'), data.get('kycStatus'),
          data.get('status'), res_id))
     conn.commit()
     conn.close()

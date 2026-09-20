@@ -1,134 +1,16 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PG & Hostel Management SaaS</title>
-    <!-- Google Fonts: Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <!-- Main Styles -->
-    <link rel="stylesheet" href="styles.css?v=5">
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Chart.js for business reports -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- SheetJS for Excel downloads (with style support) -->
-    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-</head>
-<body>
-    <div class="app-container">
-        <!-- Sidebar Navigation: 7 Main Options -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <div class="logo">
-                    <div class="logo-icon"><i data-lucide="building-2"></i></div>
-                    <div class="logo-text">
-                        <span class="logo-title">PG Manager</span>
-                        <span class="logo-subtitle">SaaS Platform</span>
-                    </div>
-                </div>
-            </div>
+import sys
+import re
 
-            <nav class="sidebar-nav">
-                <ul id="nav-list">
-                    <li><a href="#" class="nav-item active" data-view="dashboard"><i data-lucide="layout-dashboard"></i> <span>Dashboard</span></a></li>
-                    <li><a href="#" class="nav-item" data-view="properties"><i data-lucide="bed"></i> <span>Rooms</span></a></li>
-                    <li><a href="#" class="nav-item" data-view="residents"><i data-lucide="users"></i> <span>Residents</span></a></li>
-                    <li><a href="#" class="nav-item" data-view="payments"><i data-lucide="indian-rupee"></i> <span>Rent & Payments</span></a></li>
-                    <li><a href="#" class="nav-item" data-view="expenses"><i data-lucide="receipt"></i> <span>Expenses</span></a></li>
-                    <li><a href="#" class="nav-item" data-view="reports"><i data-lucide="bar-chart-3"></i> <span>Reports</span></a></li>
-                    <li><a href="#" class="nav-item" data-view="complaints"><i data-lucide="wrench"></i> <span>Complaints</span></a></li>
-                    <li><a href="#" class="nav-item" data-view="settings"><i data-lucide="settings"></i> <span>Settings</span></a></li>
-                </ul>
-            </nav>
+# 1. Update index.html
+with open('index.html', 'r', encoding='utf-8') as f:
+    html_content = f.read()
 
-            <div class="sidebar-footer">
-                <div class="user-profile" id="user-profile-trigger" title="Open Settings & Account">
-                    <div class="avatar">OM</div>
-                    <div class="user-info">
-                        <span class="user-name">Owner Manager</span>
-                        <span class="user-role">PG Owner (Admin)</span>
-                    </div>
-                    <button class="settings-gear-btn" title="Settings"><i data-lucide="settings"></i></button>
-                </div>
-            </div>
-        </aside>
+html2pdf_script = '<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>'
 
-        <!-- Main Content Area -->
-        <main class="main-content">
-            <!-- Topbar with Global Property Switcher and Notification Center -->
-            <header class="topbar" style="background-color: var(--primary); border-radius: 12px; margin: 12px 16px 16px 16px; padding: 0 32px; display: flex; justify-content: space-between; align-items: center; color: white; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.1); height: 84px; box-sizing: border-box;">
-                <div class="topbar-left" style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px; position: relative;">
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <span style="font-size: 13px; font-weight: 500; opacity: 0.9;">Good morning</span>
-                        <div style="background-color: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 12px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;">
-                            <i data-lucide="calendar" style="width: 12px; height: 12px;"></i>
-                            <span id="current-date-display">Friday, 18 September</span>
-                        </div>
-                    </div>
-                    
-                    <div style="display: flex; align-items: center; gap: 12px; margin-top: 4px; position: relative;">
-                        <div class="property-selector-wrapper" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10;">
-                            <select id="global-property-selector" class="property-select" style="width: 100%; height: 100%; cursor: pointer;">
-                                <option value="all">🏢 All Properties</option>
-                                <!-- Dynamically populated -->
-                            </select>
-                        </div>
-                        
-                        <div style="background-color: rgba(255,255,255,0.15); width: 28px; height: 28px; border-radius: 6px; display: flex; justify-content: center; align-items: center;">
-                            <i data-lucide="chevrons-up-down" style="width: 16px; height: 16px;"></i>
-                        </div>
-                        <h1 id="page-title" style="font-size: 26px; font-weight: 700; margin: 0; letter-spacing: 0.2px; color: white;">All Properties</h1>
-                    </div>
-                </div>
+if 'html2pdf.bundle.min.js' not in html_content:
+    html_content = html_content.replace('</head>', f'    {html2pdf_script}\n</head>')
 
-                <div class="topbar-right" style="display: flex; align-items: center; gap: 16px;">
-                    <!-- Global Notification Bell -->
-                    <div class="notification-wrapper">
-                        <button class="icon-btn" id="btn-notifications" style="border: 1px solid rgba(255,255,255,0.4); background: transparent; color: white; width: 40px; height: 40px; border-radius: 8px; position: relative; display: flex; justify-content: center; align-items: center;">
-                            <i data-lucide="bell" style="width: 18px; height: 18px;"></i>
-                            <span class="badge-dot" id="notif-badge-dot" style="background-color: #ff8fa3; border-color: var(--primary); width: 10px; height: 10px; right: 8px; top: 8px;"></span>
-                        </button>
-                        <div class="notification-dropdown" id="notification-dropdown">
-                            <div class="notif-header">
-                                <h3>Alerts & Notifications</h3>
-                                <span class="notif-count-tag" id="notif-count-badge">0 Alerts</span>
-                            </div>
-                            <div class="notif-list" id="notif-list">
-                                <!-- Populated dynamically -->
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Property Actions -->
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <button class="btn btn-sm" id="btn-add-property" style="background-color: white; color: #3b3486; border: none; border-radius: 6px; padding: 10px 16px; font-weight: 600; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.05);" onclick="window.openAddPropertyModal();">
-                            <i data-lucide="plus" style="width: 16px; height: 16px;"></i> Add Property
-                        </button>
-                    </div>
-                </div>
-            </header>
-
-            <!-- Dynamic Views Container -->
-            <div id="view-container" class="view-container">
-                <!-- Injected by app.js -->
-            </div>
-        </main>
-    </div>
-
-    <!-- Modals & Drawers Container -->
-    <div id="modal-container"></div>
-
-    <!-- Toast Notification Container -->
-    <div id="toast-container"></div>
-
-    <!-- Scripts -->
-    <script src="api_client.js?v=6"></script>
-    <script src="app.js?v=6"></script>
-
+receipt_template_html = """
     <!-- Hidden Receipt Template -->
     <div id="receipt-container" style="display: none; position: absolute; left: -9999px;">
         <div id="receipt-template" style="width: 794px; min-height: 1123px; padding: 60px; background-color: white; color: #1e293b; font-family: 'Inter', sans-serif; box-sizing: border-box;">
@@ -248,6 +130,152 @@
 
         </div>
     </div>
+"""
 
-</body>
-</html>
+if 'id="receipt-container"' not in html_content:
+    html_content = html_content.replace('</body>', f'{receipt_template_html}\n</body>')
+
+with open('index.html', 'w', encoding='utf-8') as f:
+    f.write(html_content)
+
+
+# 2. Update app.js
+with open('app.js', 'r', encoding='utf-8') as f:
+    app_content = f.read()
+
+# Update renderPaymentsRows buttons
+original_buttons = """                ${p.status !== 'Paid' ? `
+                    <button class="btn btn-primary btn-sm" onclick="openRecordPaymentModal('${p.id}', ${p.amountExpected - p.amountPaid})">Collect</button>
+                ` : `
+                    <span class="badge badge-success"><i data-lucide="check" style="width:12px; height:12px; margin-right:4px;"></i> Done</span>
+                `}
+            </td>"""
+
+new_buttons = """                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    ${p.status !== 'Paid' ? `
+                        <button class="btn btn-primary btn-sm" onclick="openRecordPaymentModal('${p.id}', ${p.amountExpected - p.amountPaid})">Collect</button>
+                    ` : ``}
+                    ${p.status === 'Paid' || p.status === 'Partial' ? `
+                        <button class="btn btn-outline btn-sm" onclick="generateReceipt('${p.id}')" style="padding: 4px 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;" title="Download Receipt">
+                            <i data-lucide="receipt" style="width:14px; height:14px;"></i> Receipt
+                        </button>
+                    ` : ''}
+                </div>
+            </td>"""
+
+app_content = app_content.replace(original_buttons, new_buttons)
+
+generate_receipt_fn = """
+// --- Receipt Generation ---
+async function generateReceipt(paymentId) {
+    const payment = window.db.get('payments').find(p => p.id === paymentId);
+    if (!payment) return;
+    
+    // Get related data
+    const resident = window.db.get('residents').find(r => r.id === payment.residentId) || { name: payment.residentName, phone: payment.residentPhone, roomId: null };
+    
+    // Find room via resident, then fallback to looking it up
+    let room;
+    if (resident.roomId) {
+        room = window.db.get('rooms').find(r => r.id === resident.roomId);
+    }
+    
+    // Get property
+    let property;
+    if (payment.propertyId) {
+        property = window.db.get('properties').find(p => p.id === payment.propertyId);
+    } else if (room) {
+        property = window.db.get('properties').find(p => p.id === room.propertyId);
+    }
+    
+    if (!property) {
+        property = { name: payment.propertyName || 'Property', address: 'Address not found' };
+    }
+    if (!room) {
+        room = { floor: 'N/A', roomNumber: payment.roomNumber || 'N/A' };
+    }
+    
+    // Get bed info if available
+    let bedStr = '';
+    if (resident.roomId) {
+        const bed = window.db.get('beds').find(b => b.roomId === resident.roomId && b.status === 'Occupied');
+        if (bed) bedStr = ` · Bed ${bed.bedName}`;
+    }
+
+    const currency = window.db.get('settings')?.currency || '₹';
+    const amountExpected = payment.amountExpected || 0;
+    const amountPaid = payment.amountPaid || 0;
+    const balance = Math.max(0, amountExpected - amountPaid);
+    
+    // Populate Template
+    document.getElementById('receipt-property-name').textContent = property.name;
+    document.getElementById('receipt-footer-prop-name').textContent = property.name;
+    document.getElementById('receipt-footer-prop-address').textContent = property.address || '';
+    
+    document.getElementById('receipt-resident-name').textContent = resident.name || payment.residentName;
+    document.getElementById('receipt-resident-phone').textContent = resident.phone || payment.residentPhone || 'N/A';
+    document.getElementById('receipt-resident-room').textContent = `Floor ${room.floor || '0'} · Room ${room.roomNumber}${bedStr}`;
+    
+    // Receipt No (Mock if not present)
+    const recNo = `REC-${payment.id.replace('pay_', '').substring(0, 6).toUpperCase()}`;
+    document.getElementById('receipt-no').textContent = recNo;
+    
+    document.getElementById('receipt-payment-date').textContent = payment.paymentDate || 'N/A';
+    document.getElementById('receipt-datetime').textContent = payment.paymentDate ? `${payment.paymentDate} 10:00 AM` : 'N/A';
+    
+    // Format Month (e.g. 2026-09 to September 2026)
+    let displayMonth = payment.month;
+    if (displayMonth && displayMonth.includes('-')) {
+        const [yyyy, mm] = displayMonth.split('-');
+        const date = new Date(parseInt(yyyy), parseInt(mm) - 1, 1);
+        displayMonth = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+    }
+    document.getElementById('receipt-rent-month').textContent = displayMonth;
+    document.getElementById('receipt-table-month').textContent = displayMonth;
+    
+    const dueDate = `${window.db.get('settings')?.rentDueDate || 5} ${displayMonth}`;
+    document.getElementById('receipt-due-date').textContent = dueDate;
+    
+    document.getElementById('receipt-status-top').textContent = payment.status;
+    document.getElementById('receipt-status-bottom').textContent = payment.status;
+    
+    document.getElementById('receipt-table-due').textContent = `${currency}${amountExpected.toLocaleString()}`;
+    document.getElementById('receipt-table-paid').textContent = `${currency}${amountPaid.toLocaleString()}`;
+    document.getElementById('receipt-table-balance').textContent = `${currency}${balance.toLocaleString()}`;
+    
+    document.getElementById('receipt-summary-rent').textContent = `${currency}${amountExpected.toLocaleString()}`;
+    document.getElementById('receipt-summary-paid').textContent = `${currency}${amountPaid.toLocaleString()}`;
+    document.getElementById('receipt-summary-balance').textContent = `${currency}${balance.toLocaleString()}`;
+    
+    document.getElementById('receipt-mode').textContent = payment.paymentMode || 'N/A';
+    document.getElementById('receipt-tx-id').textContent = payment.referenceNumber || 'N/A';
+
+    // Show temporary, generate, hide
+    const element = document.getElementById('receipt-template');
+    const container = document.getElementById('receipt-container');
+    container.style.display = 'block';
+    
+    showToast('Generating Receipt...', 'info');
+    
+    const opt = {
+      margin:       0,
+      filename:     `Receipt_${recNo}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true },
+      jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save().then(() => {
+        container.style.display = 'none';
+        showToast('Receipt downloaded successfully!');
+    });
+}
+"""
+
+if 'async function generateReceipt' not in app_content:
+    app_content += '\n' + generate_receipt_fn
+
+with open('app.js', 'w', encoding='utf-8') as f:
+    f.write(app_content)
+
+print("Receipt logic added.")
