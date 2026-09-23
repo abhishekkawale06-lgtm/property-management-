@@ -362,6 +362,165 @@ function renderDashboardView(container) {
                 `;}).join('')}
             </div>
             
+            ${(() => {
+                const currentMonthStr = new Date().toISOString().slice(0, 7);
+                const allPayments = window.db.get('payments') || [];
+                const pendingPayments = allPayments.filter(p => 
+                    p.month === currentMonthStr && 
+                    (p.status === 'Pending' || p.status === 'Overdue' || p.status === 'Partial') &&
+                    (!window.db.selectedPropertyId || window.db.selectedPropertyId === 'all' || p.propertyId === window.db.selectedPropertyId)
+                );
+                
+                if (pendingPayments.length === 0) return '';
+                
+                const fullyPendingCount = pendingPayments.filter(p => p.status === 'Pending' || p.status === 'Overdue').length;
+                const partialPendingCount = pendingPayments.filter(p => p.status === 'Partial').length;
+                
+                const totalPending = pendingPayments.reduce((sum, p) => sum + (p.amountExpected - (p.amountPaid || 0)), 0);
+                
+                const allResidents = window.db.get('residents') || [];
+                const allProperties = window.db.get('properties') || [];
+                const residentsListHTML = pendingPayments.map(p => {
+                    const resident = allResidents.find(r => r.id === p.residentId);
+                    if (!resident) return '';
+                    const property = allProperties.find(pr => pr.id === resident.propertyId);
+                    const propName = property ? property.name : 'Unknown Property';
+                    const owed = p.amountExpected - (p.amountPaid || 0);
+                    const dueDateFormatted = p.dueDate ? new Date(p.dueDate).toLocaleDateString('en-IN', {day:'numeric', month:'short'}) : 'N/A';
+                    
+                    return `
+                        <div style="display: flex; align-items: center; padding: 12px 16px; background: rgba(255,255,255,0.7); border-radius: 8px; margin-bottom: 8px;">
+                            <div style="width: 36px; height: 36px; border-radius: 50%; background-color: #f1f5f9; color: #475569; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; margin-right: 16px;">
+                                ${resident.name.charAt(0)}
+                            </div>
+                            <div style="flex: 1; display: grid; grid-template-columns: 280px 100px 120px 120px 120px 1fr; gap: 24px; align-items: center;">
+                                <div style="min-width: 0;">
+                                    <div style="font-size: 14px; font-weight: 600; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${resident.name}</div>
+                                    <div style="font-size: 12px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${propName} • Room ${resident.roomId.split('_').pop()}</div>
+                                </div>
+                                <div style="font-size: 13px; color: #475569; font-weight: 500;">
+                                    ${dueDateFormatted}
+                                </div>
+                                <div style="font-size: 13px; color: #475569; font-weight: 500;">
+                                    ₹${(resident.monthlyRent || p.amountExpected).toLocaleString('en-IN')}
+                                </div>
+                                <div style="font-size: 14px; font-weight: 700; color: #e11d48;">
+                                    ₹${owed.toLocaleString('en-IN')}
+                                </div>
+                                <div style="font-size: 14px; color: #475569; font-weight: 600;">
+                                    ${resident.phone || 'N/A'}
+                                </div>
+                                <div style="display: flex; justify-content: flex-end;">
+                                    <button onclick="alert('Reminder sent to ${resident.name}'); return false;" style="background-color: #eff6ff; color: #2563eb; border: 1px solid #93c5fd; border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                                        Remind
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                return `
+                    <!-- Rent Due Notification Bar -->
+                    <div style="margin-top: 32px; background: linear-gradient(135deg, #fff1f2 0%, #fef2f2 100%); border-left: 4px solid #f43f5e; border-radius: 12px; padding: 20px 24px; box-shadow: 0 4px 12px rgba(244, 63, 94, 0.05); border: 1px solid #ffe4e6; border-left-width: 4px;">
+                        <div style="display: flex; align-items: center; padding-bottom: 20px; border-bottom: 1px solid rgba(244, 63, 94, 0.15); margin-bottom: ${pendingPayments.length > 0 ? '20px' : '0'};">
+                            <div style="display: flex; align-items: center; gap: 24px;">
+                                <div style="display: flex; align-items: center; gap: 16px;">
+                                    <div style="width: 44px; height: 44px; background-color: #f43f5e; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(244, 63, 94, 0.25);">
+                                        <i data-lucide="bell-ring" style="width: 22px; height: 22px;"></i>
+                                    </div>
+                                    <h4 style="margin: 0; font-size: 16px; font-weight: 700; color: #9f1239;">Rent Collection Reminder</h4>
+                                </div>
+                                
+                                <div style="display: flex; gap: 12px;">
+                                    <div style="background-color: rgba(255,255,255,0.7); border: 1px solid rgba(244, 63, 94, 0.2); border-radius: 8px; padding: 8px 16px; display: flex; flex-direction: column; align-items: center; min-width: 90px; box-shadow: 0 2px 4px rgba(244, 63, 94, 0.05);">
+                                        <span style="font-size: 20px; font-weight: 800; color: #e11d48; line-height: 1;">${fullyPendingCount}</span>
+                                        <span style="font-size: 11px; font-weight: 700; color: #9f1239; text-transform: uppercase; margin-top: 4px;">Unpaid</span>
+                                    </div>
+                                    <div style="background-color: rgba(255,255,255,0.7); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 8px 16px; display: flex; flex-direction: column; align-items: center; min-width: 90px; box-shadow: 0 2px 4px rgba(245, 158, 11, 0.05);">
+                                        <span style="font-size: 20px; font-weight: 800; color: #d97706; line-height: 1;">${partialPendingCount}</span>
+                                        <span style="font-size: 11px; font-weight: 700; color: #b45309; text-transform: uppercase; margin-top: 4px;">Partial</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        ${pendingPayments.length > 0 ? `
+                        <div style="max-height: 600px; overflow-y: auto; padding-right: 8px; margin-right: -8px;" class="custom-scrollbar">
+                            <div style="display: flex; align-items: center; padding: 0 16px 12px 16px; margin-bottom: 8px; border-bottom: 1px solid rgba(244, 63, 94, 0.1); position: sticky; top: 0; background: #fef2f2; z-index: 10; margin-left: -8px; margin-right: -8px; padding-left: 24px; padding-right: 24px;">
+                                <div style="width: 36px; margin-right: 16px;"></div>
+                                <div style="flex: 1; display: grid; grid-template-columns: 280px 100px 120px 120px 120px 1fr; gap: 24px; align-items: center;">
+                                    <div style="font-size: 11px; color: #64748b; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px;">Resident Details</div>
+                                    <div style="font-size: 11px; color: #64748b; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px;">Due Date</div>
+                                    <div style="font-size: 11px; color: #64748b; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px;">Monthly Rent</div>
+                                    <div style="font-size: 11px; color: #e11d48; text-transform: uppercase; font-weight: 900; letter-spacing: 0.5px;">Pending</div>
+                                    <div style="font-size: 11px; color: #64748b; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px;">Contact</div>
+                                    <div style="font-size: 11px; color: #64748b; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px; text-align: right;">Action</div>
+                                </div>
+                            </div>
+                            ${residentsListHTML}
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            })()}
+            
+            <!-- Complaints Row -->
+            <div style="margin-top: 32px;">
+                <div class="card" style="border-radius: 20px; background-color: #ffffff; box-shadow: 0 4px 20px rgba(0,0,0,0.03); border: 1px solid #f1f5f9; padding: 24px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 style="margin: 0; font-size: 18px; color: #0f172a;">Recent Complaints</h3>
+                        <a href="#" onclick="navigateTo('complaints'); return false;" style="font-size: 13px; font-weight: 600; color: var(--primary); text-decoration: none;">View All</a>
+                    </div>
+                    
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                        ${(() => {
+                            const allComplaints = window.db.get('complaints') || [];
+                            const filteredComplaints = allComplaints
+                                .filter(c => !window.db.selectedPropertyId || window.db.selectedPropertyId === 'all' || c.propertyId === window.db.selectedPropertyId)
+                                .sort((a,b) => new Date(b.date) - new Date(a.date))
+                                .slice(0, 3);
+                            
+                            if (filteredComplaints.length === 0) {
+                                return '<div style="padding: 24px; text-align: center; color: #94a3b8; font-size: 14px;">No recent complaints found.</div>';
+                            }
+                            
+                            return filteredComplaints.map(c => {
+                                const prop = window.db.get('properties').find(p => p.id === c.propertyId);
+                                const room = window.db.get('rooms').find(r => r.id === c.roomId);
+                                const roomNum = room ? room.roomNumber : 'N/A';
+                                
+                                let statusColor = '#f59e0b';
+                                let statusBg = '#fef3c7';
+                                if (c.status === 'Resolved') { statusColor = '#10b981'; statusBg = '#d1fae5'; }
+                                else if (c.priority === 'High') { statusColor = '#ef4444'; statusBg = '#fee2e2'; }
+                                
+                                return `
+                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px; border: 1px solid #f1f5f9; border-radius: 12px;">
+                                        <div style="display: flex; gap: 16px; align-items: center;">
+                                            <div style="width: 40px; height: 40px; border-radius: 10px; background-color: #f8fafc; display: flex; align-items: center; justify-content: center; color: #64748b;">
+                                                <i data-lucide="alert-circle" style="width: 20px; height: 20px;"></i>
+                                            </div>
+                                            <div>
+                                                <h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 600; color: #0f172a;">${c.category} Issue - Room ${roomNum}</h4>
+                                                <div style="font-size: 12px; color: #64748b; display: flex; gap: 12px; align-items: center;">
+                                                    <span style="display: flex; align-items: center; gap: 4px;"><i data-lucide="calendar" style="width: 12px; height: 12px;"></i> ${c.date}</span>
+                                                    <span>•</span>
+                                                    <span>${prop ? prop.name : ''}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <span style="display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; background-color: ${statusBg}; color: ${statusColor};">${c.status}</span>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('');
+                        })()}
+                    </div>
+                </div>
+            </div>
+
             <!-- Charts Row -->
             <div style="display: grid; grid-template-columns: 1fr; gap: 24px; margin-top: 32px;">
                 <!-- Performance Overview Chart Section -->
