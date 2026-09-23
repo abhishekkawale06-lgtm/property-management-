@@ -12,6 +12,8 @@
     <link rel="stylesheet" href="styles.css?v=5">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <!-- Chart.js for business reports -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- SheetJS for Excel downloads (with style support) -->
@@ -19,6 +21,38 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
+    <div id="login-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:#f1f5f9; z-index:9999; justify-content:center; align-items:center;">
+        <div style="background:white; padding:40px; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.1); width:100%; max-width:400px; text-align:center; box-sizing: border-box;">
+            <div style="display:flex; justify-content:center; margin-bottom: 20px;">
+                <div style="background:#3b3486; color:white; width:48px; height:48px; border-radius:12px; display:flex; align-items:center; justify-content:center;">
+                    <i data-lucide="building-2"></i>
+                </div>
+            </div>
+            <h2 style="margin-bottom:8px; font-weight:700; color:#1e293b; font-family:'Inter', sans-serif;">Welcome Back</h2>
+            <p style="color:#64748b; font-size:14px; margin-bottom:24px;">Sign in to PG Manager SaaS</p>
+            <form id="login-form" onsubmit="handleLogin(event)">
+                <div style="margin-bottom:16px; text-align:left;">
+                    <label style="display:block; margin-bottom:6px; font-size:13px; font-weight:600; color:#334155;">Email Address</label>
+                    <input type="email" id="login-email" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box; font-family:'Inter', sans-serif;">
+                </div>
+                <div style="margin-bottom:24px; text-align:left;">
+                    <label style="display:block; margin-bottom:6px; font-size:13px; font-weight:600; color:#334155;">Password</label>
+                    <input type="password" id="login-password" required style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box; font-family:'Inter', sans-serif;">
+                </div>
+                <button type="submit" style="width:100%; padding:12px; font-size:15px; font-weight:600; background-color:#3b3486; color:white; border:none; border-radius:8px; cursor:pointer;">Sign In</button>
+            </form>
+            
+            <div style="display:flex; align-items:center; margin:24px 0;">
+                <hr style="flex:1; border:none; border-top:1px solid #cbd5e1;">
+                <span style="padding:0 12px; font-size:13px; color:#64748b; font-weight:500;">OR</span>
+                <hr style="flex:1; border:none; border-top:1px solid #cbd5e1;">
+            </div>
+            
+            <div id="google-login-btn" style="display:flex; justify-content:center;"></div>
+            
+            <p id="login-error" style="color:#ef4444; margin-top:16px; font-size:13.5px; display:none; font-weight:500;"></p>
+        </div>
+    </div>
     <div class="app-container">
         <!-- Sidebar Navigation: 7 Main Options -->
         <aside class="sidebar">

@@ -15,12 +15,80 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderActiveView();
     });
 
-    // Initial load
-    await window.db.loadState('all');
-    updateGlobalPropertyDropdown();
-    updateNotificationBadge();
-    renderActiveView();
+    const token = localStorage.getItem('pg_token');
+    if (!token) {
+        document.getElementById('login-overlay').style.display = 'flex';
+        initGoogleAuth();
+    } else {
+        try {
+            await window.db.loadState('all');
+            updateGlobalPropertyDropdown();
+            updateNotificationBadge();
+            renderActiveView();
+        } catch(e) {}
+    }
 });
+
+window.addEventListener('auth_required', () => {
+    document.getElementById('login-overlay').style.display = 'flex';
+    initGoogleAuth();
+});
+
+function initGoogleAuth() {
+    if (window.google && window.google.accounts) {
+        google.accounts.id.initialize({
+            client_id: '968890788287-q8ihe5m7i77fgtd6ed2h58dgpuaunv11.apps.googleusercontent.com',
+            callback: handleGoogleLogin
+        });
+        google.accounts.id.renderButton(
+            document.getElementById('google-login-btn'),
+            { theme: 'outline', size: 'large', width: 320 }
+        );
+    } else {
+        setTimeout(initGoogleAuth, 100);
+    }
+}
+
+async function handleGoogleLogin(response) {
+    const err = document.getElementById('login-error');
+    err.style.display = 'none';
+    
+    try {
+        const success = await window.db.loginWithGoogle(response.credential);
+        if (success) {
+            document.getElementById('login-overlay').style.display = 'none';
+            await window.db.loadState('all');
+            updateGlobalPropertyDropdown();
+            updateNotificationBadge();
+            renderActiveView();
+        }
+    } catch(error) {
+        err.style.display = 'block';
+        err.textContent = error.message;
+    }
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    const email = document.getElementById('login-email').value;
+    const pass = document.getElementById('login-password').value;
+    const err = document.getElementById('login-error');
+    err.style.display = 'none';
+    
+    try {
+        const success = await window.db.login(email, pass);
+        if (success) {
+            document.getElementById('login-overlay').style.display = 'none';
+            await window.db.loadState('all');
+            updateGlobalPropertyDropdown();
+            updateNotificationBadge();
+            renderActiveView();
+        }
+    } catch(error) {
+        err.style.display = 'block';
+        err.textContent = error.message;
+    }
+}
 
 // --- Toast Notification Helper ---
 function showToast(message, type = 'success') {
@@ -1014,7 +1082,10 @@ function renderResidentsView(container) {
                     <option value="Rejected">KYC Rejected</option>
                 </select>
             </div>
-            <div class="filter-bar-right"></div>
+            <div class="filter-bar-right">
+                <button class="btn btn-secondary" onclick="exportData('residents', 'csv')"><i data-lucide="download"></i> CSV</button>
+                <button class="btn btn-secondary" onclick="exportData('residents', 'excel')"><i data-lucide="download"></i> Excel</button>
+            </div>
         </div>
 
         <div class="card">
@@ -1192,6 +1263,8 @@ function renderPaymentsView(container) {
                 </select>
             </div>
             <div class="filter-bar-right">
+                <button class="btn btn-secondary" onclick="exportData('payments', 'csv')"><i data-lucide="download"></i> CSV</button>
+                <button class="btn btn-secondary" onclick="exportData('payments', 'excel')"><i data-lucide="download"></i> Excel</button>
             </div>
         </div>
 
@@ -1253,7 +1326,8 @@ function renderPaymentsRows(paymentsList) {
                 ${p.status !== 'Paid' ? `
                     <button class="btn btn-primary btn-sm" onclick="openRecordPaymentModal('${p.id}', ${p.amountExpected - p.amountPaid})">Collect</button>
                 ` : `
-                    <button class="btn btn-secondary btn-sm" onclick="openReceiptModal('${p.id}')"><i data-lucide="file-text"></i> Receipt</button>
+                    <button class="btn btn-secondary btn-sm" onclick="openReceiptModal('${p.id}')" style="margin-right:5px;"><i data-lucide="file-text"></i> Receipt</button>
+                    <button class="btn btn-secondary btn-sm" onclick="emailReceipt('${p.id}')"><i data-lucide="mail"></i> Email</button>
                 `}
             </td>
         </tr>
@@ -5461,4 +5535,35 @@ function confirmLogout() {
             <button onclick="window.location.reload()" style="background-color: #3b3486; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600;">Return to Login</button>
         </div>
     `;
+}
+
+async function exportData(type, format) {
+    try {
+        const res = await fetch(`/api/export/${type}?format=${format}`);
+        const result = await res.json();
+        if (result && result.downloadUrl) {
+            const link = document.createElement('a');
+            link.href = result.downloadUrl;
+            link.download = '';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast('Export started', 'success');
+        } else {
+            showToast('Export failed', 'error');
+        }
+    } catch(e) {
+        showToast('Export failed', 'error');
+    }
+}
+
+async function emailReceipt(paymentId) {
+    try {
+        const p = window.db.get('payments').find(x => x.id === paymentId);
+        if (!p) return;
+        await window.db.notifyRent(p.residentId, p.month, p.amountPaid);
+        showToast('Receipt emailed successfully!', 'success');
+    } catch(e) {
+        showToast('Failed to email receipt', 'error');
+    }
 }

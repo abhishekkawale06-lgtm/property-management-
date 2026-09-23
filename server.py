@@ -1,12 +1,58 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from database import get_db, init_db
+from pg_wrapper import get_db
 import os
 import uuid
 from datetime import datetime, timedelta
+import jwt
+from functools import wraps
+from werkzeug.security import check_password_hash
+from werkzeug.utils import secure_filename
+import pandas as pd
+
+from dotenv import load_dotenv
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
+load_dotenv()
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
+
+app.config['SECRET_KEY'] = os.environ.get('JWT_SECRET', 'fallback-dev-secret-change-in-prod')
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['SECURE_UPLOAD_FOLDER'] = 'secure_uploads'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['SECURE_UPLOAD_FOLDER'], exist_ok=True)
+
+@app.before_request
+def verify_token():
+    if request.method == 'OPTIONS':
+        return
+    if request.path.startswith('/api/') and request.path not in ['/api/login']:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Token is missing'}), 401
+        token = auth_header.split(' ')[1]
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            request.current_user_id = data.get('user_id')
+            request.current_user_role = data.get('role', 'Viewer')
+        except Exception:
+            return jsonify({'error': 'Token is invalid'}), 401
+
+def get_current_user():
+    """Returns (user_id, role, list_of_property_ids) for the logged-in user."""
+    user_id = getattr(request, 'current_user_id', None)
+    role = getattr(request, 'current_user_role', 'Viewer')
+    if not user_id:
+        return None, None, []
+    if role == 'Owner':
+        return user_id, role, None  # None means 'all properties'
+    conn = get_db()
+    rows = conn.execute('SELECT propertyId FROM user_properties WHERE userId = ?', (user_id,)).fetchall()
+    conn.close()
+    return user_id, role, [r['propertyId'] for r in rows]
 
 @app.route('/')
 def index():
@@ -14,13 +60,217 @@ def index():
 
 @app.route('/<path:path>')
 def static_files(path):
+    if path.startswith('secure_uploads/'):
+        return "Forbidden", 403
     if os.path.exists(path):
         return send_from_directory('.', path)
     return "Not Found", 404
 
-# ----------------------------------------------------
-# 1. PROPERTIES API
-# ----------------------------------------------------
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.json
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'error': 'Missing credentials'}), 400
+    
+    conn = get_db()
+    user = conn.execute('SELECT * FROM users WHERE email = ? AND status = ?', (data['email'], 'Active')).fetchone()
+    
+    if not user or not check_password_hash(user['password'], data['password']):
+        conn.close()
+        return jsonify({'error': 'Invalid credentials'}), 401
+
+    # Get accessible properties for this user
+    if user['role'] == 'Owner':
+        props = conn.execute('SELECT id, name FROM properties WHERE active = 1').fetchall()
+    else:
+        props = conn.execute('''SELECT p.id, p.name FROM properties p
+            JOIN user_properties up ON p.id = up.propertyId
+            WHERE up.userId = ? AND p.active = 1''', (user['id'],)).fetchall()
+    conn.close()
+
+    token = jwt.encode({
+        'user_id': user['id'],
+        'role': user['role'],
+        'exp': datetime.utcnow() + timedelta(hours=24)
+    }, app.config['SECRET_KEY'], algorithm='HS256')
+
+    return jsonify({
+        'success': True,
+        'token': token,
+        'user': {
+            'id': user['id'],
+            'name': user['name'],
+            'role': user['role'],
+            'avatar': user['avatar']
+        },
+        'accessibleProperties': [dict(p) for p in props]
+    })
+
+@app.route('/api/login/google', methods=['POST'])
+def login_google():
+    data = request.json
+    if not data or not data.get('credential'):
+        return jsonify({'error': 'Missing credential'}), 400
+
+    try:
+        # Verify the Google token
+        client_id = '968890788287-q8ihe5m7i77fgtd6ed2h58dgpuaunv11.apps.googleusercontent.com'
+        idinfo = id_token.verify_oauth2_token(data['credential'], google_requests.Request(), client_id)
+
+        email = idinfo['email']
+        name = idinfo.get('name', '')
+        
+        conn = get_db()
+        user = conn.execute('SELECT * FROM users WHERE email = ?', (email,)).fetchone()
+        
+        if not user:
+            # Auto-create user for Google Login
+            user_id = str(uuid.uuid4())[:8]
+            from werkzeug.security import generate_password_hash
+            import secrets
+            # Generate a random password since they login with Google
+            random_pw = generate_password_hash(secrets.token_urlsafe(16), method='pbkdf2:sha256')
+            avatar = ''.join([w[0].upper() for w in name.split()[:2]]) if name else 'G'
+            
+            # Default to Manager role (requires Owner to assign properties later)
+            conn.execute('INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                (user_id, name, email, random_pw, '', 'Manager', avatar, 'Active'))
+            conn.commit()
+            
+            user = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+        
+        if user['status'] != 'Active':
+            conn.close()
+            return jsonify({'error': 'Account is inactive'}), 401
+
+        # Get accessible properties for this user
+        if user['role'] == 'Owner':
+            props = conn.execute('SELECT id, name FROM properties WHERE active = 1').fetchall()
+        else:
+            props = conn.execute('''SELECT p.id, p.name FROM properties p
+                JOIN user_properties up ON p.id = up.propertyId
+                WHERE up.userId = ? AND p.active = 1''', (user['id'],)).fetchall()
+        conn.close()
+
+        # Issue our own JWT
+        token = jwt.encode({
+            'user_id': user['id'],
+            'role': user['role'],
+            'exp': datetime.utcnow() + timedelta(hours=24)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+
+        return jsonify({
+            'success': True,
+            'token': token,
+            'user': {
+                'id': user['id'],
+                'name': user['name'],
+                'role': user['role'],
+                'avatar': user['avatar']
+            },
+            'accessibleProperties': [dict(p) for p in props]
+        })
+
+    except ValueError:
+        return jsonify({'error': 'Invalid Google token'}), 401
+
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    is_secure = request.form.get('secure') == 'true'
+    
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    if file:
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex}_{filename}"
+        
+        try:
+            from supabase import create_client
+            supabase = create_client(os.environ.get('SUPABASE_URL'), os.environ.get('SUPABASE_KEY'))
+            file_bytes = file.read()
+            bucket = 'secure-uploads' if is_secure else 'uploads'
+            supabase.storage.from_(bucket).upload(
+                path=unique_filename,
+                file=file_bytes,
+                file_options={"content-type": file.content_type or 'application/octet-stream'}
+            )
+            public_url = supabase.storage.from_(bucket).get_public_url(unique_filename)
+            return jsonify({'success': True, 'fileUrl': public_url, 'isSecure': is_secure})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/secure-file', methods=['GET'])
+def get_secure_file():
+    filepath = request.args.get('path')
+    if not filepath:
+        return "Forbidden", 403
+    _, role, _ = get_current_user()
+    if role not in ['Owner', 'Manager']:
+        return jsonify({'error': 'Unauthorized'}), 403
+    try:
+        from supabase import create_client
+        supabase = create_client(os.environ.get('SUPABASE_URL'), os.environ.get('SUPABASE_KEY'))
+        filename = filepath.split('/')[-1]
+        signed = supabase.storage.from_('secure-uploads').create_signed_url(filename, 60)
+        from flask import redirect
+        return redirect(signed['signedURL'])
+    except Exception as e:
+        return jsonify({'error': 'File not found'}), 404
+
+@app.route('/api/export/residents', methods=['GET'])
+def export_residents():
+    conn = get_db()
+    df = pd.read_sql_query('SELECT name, phone, email, joiningDate, monthlyRent, kycStatus, status FROM residents', conn)
+    conn.close()
+    
+    format_type = request.args.get('format', 'csv')
+    timestamp = datetime.today().strftime('%Y%m%d%H%M%S')
+    
+    if format_type == 'excel':
+        filename = f"residents_export_{timestamp}.xlsx"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        df.to_excel(filepath, index=False)
+    else:
+        filename = f"residents_export_{timestamp}.csv"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        df.to_csv(filepath, index=False)
+        
+    return jsonify({'success': True, 'downloadUrl': f'/{filepath}'})
+
+@app.route('/api/export/payments', methods=['GET'])
+def export_payments():
+    conn = get_db()
+    df = pd.read_sql_query('SELECT month, amountExpected, amountPaid, dueDate, paymentMode, receiptNumber, status FROM payments', conn)
+    conn.close()
+    
+    format_type = request.args.get('format', 'csv')
+    timestamp = datetime.today().strftime('%Y%m%d%H%M%S')
+    
+    if format_type == 'excel':
+        filename = f"payments_export_{timestamp}.xlsx"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        df.to_excel(filepath, index=False)
+    else:
+        filename = f"payments_export_{timestamp}.csv"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        df.to_csv(filepath, index=False)
+        
+    return jsonify({'success': True, 'downloadUrl': f'/{filepath}'})
+
+@app.route('/api/notify/rent', methods=['POST'])
+def notify_rent():
+    data = request.json or {}
+    res_id = data.get('residentId')
+    month = data.get('month')
+    amount = data.get('amount')
+    print(f"\\n[EMAIL MOCK] Sending Rent Receipt to Resident {res_id} for {month}. Amount: {amount}")
+    print("[EMAIL MOCK] Email Sent Successfully!\\n")
+    return jsonify({'success': True})
 @app.route('/api/properties', methods=['GET'])
 def get_properties():
     conn = get_db()
@@ -124,9 +374,7 @@ def delete_property(prop_id):
     conn.close()
     return jsonify({"success": True})
 
-# ----------------------------------------------------
-# 2. ROOMS & BEDS API
-# ----------------------------------------------------
+
 @app.route('/api/rooms', methods=['GET'])
 def get_rooms():
     prop_id = request.args.get('propertyId')
@@ -238,9 +486,7 @@ def update_bed_status(bed_id):
     conn.close()
     return jsonify({"success": True})
 
-# ----------------------------------------------------
-# 3. RESIDENTS & KYC API
-# ----------------------------------------------------
+
 @app.route('/api/residents', methods=['GET'])
 def get_residents():
     prop_id = request.args.get('propertyId')
@@ -1144,12 +1390,141 @@ def update_settings():
 
 @app.route('/api/settings/reset', methods=['POST'])
 def reset_database():
+    if os.environ.get('FLASK_ENV') == 'production':
+        return jsonify({"success": False, "error": "Database reset is disabled in production environment"}), 403
+
     try:
         init_db(force_reseed=True)
         return jsonify({"success": True, "message": "Database reset to initial demo state"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+# ----------------------------------------------------
+# 12. USER MANAGEMENT (Multi-Admin)
+# ----------------------------------------------------
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    _, role, _ = get_current_user()
+    if role != 'Owner':
+        return jsonify({'error': 'Only Owner can manage users'}), 403
+    conn = get_db()
+    users = conn.execute('SELECT id, name, email, phone, role, avatar, status FROM users').fetchall()
+    result = []
+    for u in users:
+        user_dict = dict(u)
+        props = conn.execute('SELECT propertyId, accessLevel FROM user_properties WHERE userId = ?', (u['id'],)).fetchall()
+        user_dict['properties'] = [dict(p) for p in props]
+        result.append(user_dict)
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/users', methods=['POST'])
+def create_user():
+    _, role, _ = get_current_user()
+    if role != 'Owner':
+        return jsonify({'error': 'Only Owner can create users'}), 403
+    
+    data = request.json or {}
+    if not data.get('name') or not data.get('email') or not data.get('password'):
+        return jsonify({'error': 'Name, email, and password are required'}), 400
+
+    from werkzeug.security import generate_password_hash
+    conn = get_db()
+    
+    # Check if email already exists
+    existing = conn.execute('SELECT id FROM users WHERE email = ?', (data['email'],)).fetchone()
+    if existing:
+        conn.close()
+        return jsonify({'error': 'A user with this email already exists'}), 409
+
+    user_id = str(uuid.uuid4())[:8]
+    hashed = generate_password_hash(data['password'], method='pbkdf2:sha256')
+    avatar = ''.join([w[0].upper() for w in data['name'].split()[:2]])
+    
+    conn.execute('INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        (user_id, data['name'], data['email'], hashed, data.get('phone', ''),
+         data.get('role', 'Manager'), avatar, 'Active'))
+
+    # Assign properties
+    for prop_id in data.get('propertyIds', []):
+        conn.execute('INSERT OR IGNORE INTO user_properties (userId, propertyId, accessLevel) VALUES (?, ?, ?)',
+            (user_id, prop_id, data.get('accessLevel', 'full')))
+    
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'id': user_id})
+
+@app.route('/api/users/<user_id>', methods=['PUT'])
+def update_user(user_id):
+    _, role, _ = get_current_user()
+    if role != 'Owner':
+        return jsonify({'error': 'Only Owner can update users'}), 403
+    
+    data = request.json or {}
+    conn = get_db()
+    
+    conn.execute('''UPDATE users SET
+        name = COALESCE(?, name),
+        phone = COALESCE(?, phone),
+        role = COALESCE(?, role),
+        status = COALESCE(?, status)
+        WHERE id = ?''',
+        (data.get('name'), data.get('phone'), data.get('role'), data.get('status'), user_id))
+    
+    # Update password if provided
+    if data.get('password'):
+        from werkzeug.security import generate_password_hash
+        hashed = generate_password_hash(data['password'], method='pbkdf2:sha256')
+        conn.execute('UPDATE users SET password = ? WHERE id = ?', (hashed, user_id))
+
+    # Update property access if provided
+    if 'propertyIds' in data:
+        conn.execute('DELETE FROM user_properties WHERE userId = ?', (user_id,))
+        for prop_id in data['propertyIds']:
+            conn.execute('INSERT INTO user_properties (userId, propertyId, accessLevel) VALUES (?, ?, ?)',
+                (user_id, prop_id, data.get('accessLevel', 'full')))
+    
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+@app.route('/api/users/<user_id>', methods=['DELETE'])
+def delete_user(user_id):
+    current_uid, role, _ = get_current_user()
+    if role != 'Owner':
+        return jsonify({'error': 'Only Owner can delete users'}), 403
+    if user_id == current_uid:
+        return jsonify({'error': 'Cannot delete your own account'}), 400
+    
+    conn = get_db()
+    conn.execute('DELETE FROM user_properties WHERE userId = ?', (user_id,))
+    conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+@app.route('/api/me', methods=['GET'])
+def get_me():
+    user_id, role, prop_ids = get_current_user()
+    conn = get_db()
+    user = conn.execute('SELECT id, name, email, phone, role, avatar FROM users WHERE id = ?', (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'error': 'User not found'}), 404
+    
+    if role == 'Owner':
+        props = conn.execute('SELECT id, name FROM properties WHERE active = 1').fetchall()
+    else:
+        props = conn.execute('''SELECT p.id, p.name FROM properties p
+            JOIN user_properties up ON p.id = up.propertyId
+            WHERE up.userId = ? AND p.active = 1''', (user_id,)).fetchall()
+    conn.close()
+    
+    return jsonify({
+        **dict(user),
+        'accessibleProperties': [dict(p) for p in props]
+    })
+
 if __name__ == '__main__':
-    init_db()
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    is_dev = os.environ.get('FLASK_ENV') != 'production'
+    app.run(host='0.0.0.0', port=8000, debug=is_dev)

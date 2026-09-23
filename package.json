@@ -4,7 +4,8 @@
   "description": "Property & PG Management System",
   "scripts": {
     "start": "python3 server.py",
-    "dev": "python3 server.py"
+    "dev": "python3 server.py",
+    "start:prod": "gunicorn -w 4 -b 0.0.0.0:8000 server:app"
   },
   "keywords": [
     "property-management",

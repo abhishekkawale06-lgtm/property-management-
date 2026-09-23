@@ -2,3 +2,19 @@ __pycache__/
 *.py[cod]
 *$py.class
 .DS_Store
+
+# Environment & Secrets
+.env
+
+# Database
+pg_manager.db
+
+# Uploads (user files & KYC documents)
+uploads/
+secure_uploads/
+
+# Node
+node_modules/
+
+# Temp files
+patch_*.js

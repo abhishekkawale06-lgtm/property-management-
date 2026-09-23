@@ -1,5 +1,25 @@
 // PG Manager - Centralized API State Manager
 
+const originalFetch = window.fetch;
+window.fetch = async function() {
+    let [resource, config] = arguments;
+    if (typeof resource === 'string' && resource.startsWith('/api/') && resource !== '/api/login') {
+        config = config || {};
+        config.headers = config.headers || {};
+        const token = localStorage.getItem('pg_token');
+        if (token) {
+            config.headers['Authorization'] = `Bearer ${token}`;
+        }
+    }
+    const response = await originalFetch(resource, config);
+    if (response.status === 401 && resource !== '/api/login') {
+        window.dispatchEvent(new Event('auth_required'));
+        throw new Error('Unauthorized');
+    }
+    return response;
+};
+
+
 class StateManager {
     constructor() {
         this.selectedPropertyId = 'all'; // 'all' or propertyId
@@ -69,6 +89,75 @@ class StateManager {
 
     get(collection) {
         return this.state[collection] || [];
+    }
+
+
+    async login(email, password) {
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const result = await res.json();
+        if (res.ok && result.token) {
+            localStorage.setItem('pg_token', result.token);
+            localStorage.setItem('pg_user', JSON.stringify(result.user));
+            return true;
+        }
+        throw new Error(result.error || 'Login failed');
+    }
+
+    async loginWithGoogle(credential) {
+        const res = await fetch('/api/login/google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credential })
+        });
+        const result = await res.json();
+        if (res.ok && result.token) {
+            localStorage.setItem('pg_token', result.token);
+            localStorage.setItem('pg_user', JSON.stringify(result.user));
+            return true;
+        }
+        throw new Error(result.error || 'Google login failed');
+    }
+
+    logout() {
+        localStorage.removeItem('pg_token');
+        localStorage.removeItem('pg_user');
+        window.dispatchEvent(new Event('auth_required'));
+    }
+
+    async uploadFile(file, isSecure = false) {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (isSecure) {
+            formData.append('secure', 'true');
+        }
+        const res = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+        });
+        return await res.json();
+    }
+
+    async exportResidents() {
+        const res = await fetch('/api/export/residents');
+        return await res.json();
+    }
+
+    async exportPayments() {
+        const res = await fetch('/api/export/payments');
+        return await res.json();
+    }
+
+    async notifyRent(residentId, month, amount) {
+        const res = await fetch('/api/notify/rent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ residentId, month, amount })
+        });
+        return await res.json();
     }
 
     // --- Property Methods ---
