@@ -22,4 +22,4 @@ python3 server.py
 ```
 
 The application will be accessible at:
-[http://localhost:8000](http://localhost:8000)
+https://property-management-two-lake.vercel.app
