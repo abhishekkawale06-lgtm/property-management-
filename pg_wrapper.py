@@ -65,6 +65,10 @@ class PostgresWrapper:
         self.conn = conn
         self.conn.autocommit = False
 
+    def cursor(self):
+        """Return self for compatibility with code that calls conn.cursor()."""
+        return self
+
     def execute(self, sql, params=()):
         # 1. Replace ? placeholders with %s (but not inside strings)
         sql = sql.replace('?', '%s')
@@ -74,9 +78,22 @@ class PostgresWrapper:
             sql = sql.replace('INSERT OR IGNORE INTO', 'INSERT INTO')
             # Add ON CONFLICT DO NOTHING at the end if not already present
             if 'ON CONFLICT' not in sql:
-                sql = sql.rstrip().rstrip(')') + ') ON CONFLICT DO NOTHING'
+                # Properly append after the last closing paren of the VALUES clause
+                sql = sql.rstrip()
+                if sql.endswith(')'):
+                    sql += ' ON CONFLICT DO NOTHING'
+                else:
+                    # Fallback: strip trailing content and re-add
+                    sql = re.sub(r'\)\s*$', ') ON CONFLICT DO NOTHING', sql)
 
-        # 3. Handle AUTOINCREMENT -> (Postgres uses SERIAL, already handled in init_pg)
+        # 3. Handle SQLite double-quoted string values -> single quotes for PostgreSQL
+        # In SQLite, "Active" can be a string value, but in PostgreSQL it's an identifier.
+        # Convert double-quoted values to single quotes in SQL statements.
+        # e.g. status = "Active" -> status = 'Active'
+        # e.g. SET status = "Checked Out" -> SET status = 'Checked Out'
+        sql = re.sub(r'= "([^"]*)"', r"= '\1'", sql)
+
+        # 4. Handle AUTOINCREMENT -> (Postgres uses SERIAL, already handled in init_pg)
         # Nothing to do at query time.
 
         cursor = self.conn.cursor(cursor_factory=RealDictCursor)

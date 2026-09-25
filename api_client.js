@@ -3,7 +3,7 @@
 const originalFetch = window.fetch;
 window.fetch = async function() {
     let [resource, config] = arguments;
-    if (typeof resource === 'string' && resource.startsWith('/api/') && resource !== '/api/login') {
+    if (typeof resource === 'string' && resource.startsWith('/api/') && resource !== '/api/login' && resource !== '/api/login/google') {
         config = config || {};
         config.headers = config.headers || {};
         const token = localStorage.getItem('pg_token');
@@ -12,12 +12,27 @@ window.fetch = async function() {
         }
     }
     const response = await originalFetch(resource, config);
-    if (response.status === 401 && resource !== '/api/login') {
+    if (response.status === 401 && resource !== '/api/login' && resource !== '/api/login/google') {
         window.dispatchEvent(new Event('auth_required'));
         throw new Error('Unauthorized');
     }
     return response;
 };
+
+/**
+ * Safely parse a fetch response as JSON.
+ * If the response is not JSON (e.g. HTML error page from Vercel), throws a clear error.
+ */
+async function safeJson(res, context = 'API call') {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+        // The server returned non-JSON (likely HTML error page)
+        const text = await res.text();
+        console.error(`[${context}] Non-JSON response (${res.status}):`, text.substring(0, 200));
+        throw new Error(`Server error (${res.status}): The server did not return a valid response. Please try again.`);
+    }
+    return res.json();
+}
 
 
 class StateManager {
@@ -65,19 +80,19 @@ class StateManager {
                 fetch(`/api/analytics/summary${pParam}`)
             ]);
 
-            this.state.properties = await propRes.json();
-            this.state.rooms = await roomRes.json();
-            this.state.beds = await bedRes.json();
-            this.state.residents = await resRes.json();
-            this.state.leads = await leadRes.json();
-            this.state.payments = await payRes.json();
-            this.state.complaints = await compRes.json();
-            this.state.expenses = await expRes.json();
-            this.state.staff = await staffRes.json();
-            this.state.notices = await notRes.json();
-            this.state.notifications = await notifRes.json();
-            this.state.settings = await setRes.json();
-            this.state.analytics = await analRes.json();
+            this.state.properties = await safeJson(propRes, 'properties');
+            this.state.rooms = await safeJson(roomRes, 'rooms');
+            this.state.beds = await safeJson(bedRes, 'beds');
+            this.state.residents = await safeJson(resRes, 'residents');
+            this.state.leads = await safeJson(leadRes, 'leads');
+            this.state.payments = await safeJson(payRes, 'payments');
+            this.state.complaints = await safeJson(compRes, 'complaints');
+            this.state.expenses = await safeJson(expRes, 'expenses');
+            this.state.staff = await safeJson(staffRes, 'staff');
+            this.state.notices = await safeJson(notRes, 'notices');
+            this.state.notifications = await safeJson(notifRes, 'notifications');
+            this.state.settings = await safeJson(setRes, 'settings');
+            this.state.analytics = await safeJson(analRes, 'analytics');
 
             this.loaded = true;
             window.dispatchEvent(new CustomEvent('stateChanged', { detail: { propertyId: this.selectedPropertyId } }));
@@ -98,7 +113,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password })
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'login');
         if (res.ok && result.token) {
             localStorage.setItem('pg_token', result.token);
             localStorage.setItem('pg_user', JSON.stringify(result.user));
@@ -113,7 +128,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ credential })
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'loginWithGoogle');
         if (res.ok && result.token) {
             localStorage.setItem('pg_token', result.token);
             localStorage.setItem('pg_user', JSON.stringify(result.user));
@@ -138,17 +153,17 @@ class StateManager {
             method: 'POST',
             body: formData
         });
-        return await res.json();
+        return await safeJson(res, 'uploadFile');
     }
 
     async exportResidents() {
         const res = await fetch('/api/export/residents');
-        return await res.json();
+        return await safeJson(res, 'exportResidents');
     }
 
     async exportPayments() {
         const res = await fetch('/api/export/payments');
-        return await res.json();
+        return await safeJson(res, 'exportPayments');
     }
 
     async notifyRent(residentId, month, amount) {
@@ -157,7 +172,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ residentId, month, amount })
         });
-        return await res.json();
+        return await safeJson(res, 'notifyRent');
     }
 
     // --- Property Methods ---
@@ -167,7 +182,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addProperty');
+        if (!res.ok) throw new Error(result.error || 'Failed to add property');
         await this.loadState();
         return result;
     }
@@ -178,14 +194,18 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
+        const result = await safeJson(res, 'updateProperty');
+        if (!res.ok) throw new Error(result.error || 'Failed to update property');
         await this.loadState();
-        return await res.json();
+        return result;
     }
 
     async deleteProperty(id) {
         const res = await fetch(`/api/properties/${id}`, { method: 'DELETE' });
+        const result = await safeJson(res, 'deleteProperty');
+        if (!res.ok) throw new Error(result.error || 'Failed to delete property');
         await this.loadState();
-        return await res.json();
+        return result;
     }
 
     // --- Room & Bed Methods ---
@@ -195,7 +215,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addRoom');
+        if (!res.ok) throw new Error(result.error || 'Failed to add room');
         await this.loadState();
         return result;
     }
@@ -206,7 +227,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status })
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'updateBedStatus');
+        if (!res.ok) throw new Error(result.error || 'Failed to update bed status');
         await this.loadState();
         return result;
     }
@@ -218,7 +240,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addResident');
         if (!res.ok) throw new Error(result.error || 'Failed to onboard resident');
         await this.loadState();
         return result;
@@ -230,7 +252,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'updateResident');
+        if (!res.ok) throw new Error(result.error || 'Failed to update resident');
         await this.loadState();
         return result;
     }
@@ -241,7 +264,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ roomId, bedId })
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'transferResident');
         if (!res.ok) throw new Error(result.error || 'Failed to transfer room/bed');
         await this.loadState();
         return result;
@@ -253,7 +276,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(checkoutData)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'checkoutResident');
         if (!res.ok) throw new Error(result.error || 'Failed to complete checkout');
         await this.loadState();
         return result;
@@ -266,7 +289,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addLead');
+        if (!res.ok) throw new Error(result.error || 'Failed to add lead');
         await this.loadState();
         return result;
     }
@@ -277,7 +301,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'updateLead');
+        if (!res.ok) throw new Error(result.error || 'Failed to update lead');
         await this.loadState();
         return result;
     }
@@ -288,7 +313,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'convertLead');
         if (!res.ok) throw new Error(result.error || 'Failed to convert lead to resident');
         await this.loadState();
         return result;
@@ -301,7 +326,7 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paymentId, amountPaid: parseInt(amountPaid), paymentMode, referenceNumber, notes })
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'recordPayment');
         if (!res.ok) throw new Error(result.error || 'Failed to record payment');
         await this.loadState();
         return result;
@@ -313,7 +338,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ month })
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'generateMonthRent');
+        if (!res.ok) throw new Error(result.error || 'Failed to generate rent');
         await this.loadState();
         return result;
     }
@@ -325,7 +351,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addComplaint');
+        if (!res.ok) throw new Error(result.error || 'Failed to add complaint');
         await this.loadState();
         return result;
     }
@@ -336,7 +363,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'updateComplaint');
+        if (!res.ok) throw new Error(result.error || 'Failed to update complaint');
         await this.loadState();
         return result;
     }
@@ -348,7 +376,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addExpense');
+        if (!res.ok) throw new Error(result.error || 'Failed to add expense');
         await this.loadState();
         return result;
     }
@@ -360,7 +389,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addStaff');
+        if (!res.ok) throw new Error(result.error || 'Failed to add staff');
         await this.loadState();
         return result;
     }
@@ -371,7 +401,8 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'addNotice');
+        if (!res.ok) throw new Error(result.error || 'Failed to add notice');
         await this.loadState();
         return result;
     }
@@ -383,14 +414,16 @@ class StateManager {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await res.json();
+        const result = await safeJson(res, 'updateSettings');
+        if (!res.ok) throw new Error(result.error || 'Failed to update settings');
         await this.loadState();
         return result;
     }
 
     async resetApp() {
         const res = await fetch('/api/settings/reset', { method: 'POST' });
-        const result = await res.json();
+        const result = await safeJson(res, 'resetApp');
+        if (!res.ok) throw new Error(result.error || 'Failed to reset app');
         await this.loadState();
         return result;
     }

@@ -4293,7 +4293,7 @@ window.submitAddProperty = async function(e) {
                 globalSelector.dispatchEvent(new Event('change'));
             } else {
                 // Refresh data if no selector
-                await window.db.loadInitialData();
+                await window.db.loadState();
             }
             
             // Try to switch to Rooms tab
@@ -4496,7 +4496,7 @@ window.submitEditProperty = async function(e, propId) {
             }
             
             // Refresh data
-            await window.db.loadInitialData();
+            await window.db.loadState();
             
             // Refresh the current view
             const activeNav = document.querySelector('.nav-item.active');
@@ -5540,7 +5540,14 @@ function confirmLogout() {
 async function exportData(type, format) {
     try {
         const res = await fetch(`/api/export/${type}?format=${format}`);
-        const result = await res.json();
+        const contentType = res.headers.get('content-type') || '';
+        let result;
+        if (contentType.includes('application/json')) {
+            result = await res.json();
+        } else {
+            showToast('Export failed: server error', 'error');
+            return;
+        }
         if (result && result.downloadUrl) {
             const link = document.createElement('a');
             link.href = result.downloadUrl;

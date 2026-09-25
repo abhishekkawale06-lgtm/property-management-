@@ -29,7 +29,9 @@ os.makedirs(app.config['SECURE_UPLOAD_FOLDER'], exist_ok=True)
 def verify_token():
     if request.method == 'OPTIONS':
         return
-    if request.path.startswith('/api/') and request.path not in ['/api/login']:
+    # Paths that don't require authentication
+    public_paths = ['/api/login', '/api/login/google']
+    if request.path.startswith('/api/') and request.path not in public_paths:
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Token is missing'}), 401
@@ -40,6 +42,20 @@ def verify_token():
             request.current_user_role = data.get('role', 'Viewer')
         except Exception:
             return jsonify({'error': 'Token is invalid'}), 401
+
+@app.errorhandler(404)
+def not_found(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'API endpoint not found', 'path': request.path}), 404
+    return send_from_directory('.', 'index.html')
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({'error': 'Method not allowed'}), 405
+
+@app.errorhandler(500)
+def internal_error(e):
+    return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 def get_current_user():
     """Returns (user_id, role, list_of_property_ids) for the logged-in user."""
@@ -321,9 +337,9 @@ def add_property():
     conn = get_db()
     
     # Generate PROP-XXX ID
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM properties")
-    count = cursor.fetchone()[0]
+    result = conn.execute("SELECT COUNT(*) as cnt FROM properties")
+    count_row = result.fetchone()
+    count = count_row[0] if count_row else 0
     p_id = f"PROP-{(count + 1):03d}"
     
     conn.execute('''INSERT INTO properties 
@@ -1390,14 +1406,8 @@ def update_settings():
 
 @app.route('/api/settings/reset', methods=['POST'])
 def reset_database():
-    if os.environ.get('FLASK_ENV') == 'production':
-        return jsonify({"success": False, "error": "Database reset is disabled in production environment"}), 403
-
-    try:
-        init_db(force_reseed=True)
-        return jsonify({"success": True, "message": "Database reset to initial demo state"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    # Database reset is disabled on PostgreSQL/Supabase deployment
+    return jsonify({"success": False, "error": "Database reset is not available in this deployment"}), 403
 
 # ----------------------------------------------------
 # 12. USER MANAGEMENT (Multi-Admin)

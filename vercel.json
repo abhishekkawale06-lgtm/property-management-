@@ -20,13 +20,98 @@
     {
       "src": "assets/**",
       "use": "@vercel/static"
+    },
+    {
+      "src": "*.webp",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "*.jpg",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/index.py" },
+    {
+      "src": "/api/login/google",
+      "dest": "/api/index.py",
+      "methods": ["POST", "OPTIONS"]
+    },
+    {
+      "src": "/api/residents/(.*)/transfer",
+      "dest": "/api/index.py",
+      "methods": ["POST", "OPTIONS"]
+    },
+    {
+      "src": "/api/residents/(.*)/checkout",
+      "dest": "/api/index.py",
+      "methods": ["POST", "OPTIONS"]
+    },
+    {
+      "src": "/api/leads/(.*)/convert",
+      "dest": "/api/index.py",
+      "methods": ["POST", "OPTIONS"]
+    },
+    {
+      "src": "/api/beds/(.*)/status",
+      "dest": "/api/index.py",
+      "methods": ["PUT", "OPTIONS"]
+    },
+    {
+      "src": "/api/payments/record",
+      "dest": "/api/index.py",
+      "methods": ["POST", "OPTIONS"]
+    },
+    {
+      "src": "/api/payments/generate-month",
+      "dest": "/api/index.py",
+      "methods": ["POST", "OPTIONS"]
+    },
+    {
+      "src": "/api/analytics/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/export/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/settings/reset",
+      "dest": "/api/index.py",
+      "methods": ["POST", "OPTIONS"]
+    },
+    {
+      "src": "/api/properties/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/residents/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/leads/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/complaints/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/beds/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/users/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index.py"
+    },
     { "src": "/(.*\\.html)", "dest": "/$1" },
     { "src": "/(.*\\.js)", "dest": "/$1" },
     { "src": "/(.*\\.css)", "dest": "/$1" },
+    { "src": "/(.*\\.webp)", "dest": "/$1" },
+    { "src": "/(.*\\.jpg)", "dest": "/$1" },
     { "src": "/assets/(.*)", "dest": "/assets/$1" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
