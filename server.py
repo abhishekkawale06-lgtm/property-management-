@@ -70,10 +70,14 @@ def not_found(e):
 def method_not_allowed(e):
     return jsonify({'error': 'Method not allowed'}), 405
 
-@app.errorhandler(500)
-def internal_error(e):
-    app.logger.exception('Unhandled server error')
-    return jsonify({'error': 'Internal server error'}), 500
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # Pass through HTTP errors
+    if hasattr(e, 'code') and isinstance(e.code, int):
+        return jsonify({'error': str(e)}), e.code
+    
+    app.logger.exception('Unhandled server error: %s', str(e))
+    return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 def get_current_user():
     """Returns (user_id, role, list_of_property_ids) for the logged-in user."""
@@ -1123,14 +1127,21 @@ def add_expense():
     if not property_id or amount <= 0:
         return jsonify({"error": "Property and valid amount are required"}), 400
 
-    conn = get_db()
-    e_id = f"exp_{uuid.uuid4().hex[:6]}"
-    conn.execute('''INSERT INTO expenses (id, propertyId, date, category, description, amount, paymentMethod)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                 (e_id, property_id, date, category, desc, amount, payment_method))
-    conn.commit()
-    conn.close()
-    return jsonify({"success": True, "id": e_id})
+    conn = None
+    try:
+        conn = get_db()
+        e_id = f"exp_{uuid.uuid4().hex[:6]}"
+        conn.execute('''INSERT INTO expenses (id, propertyId, date, category, description, amount, paymentMethod)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                     (e_id, property_id, date, category, desc, amount, payment_method))
+        conn.commit()
+        return jsonify({"success": True, "id": e_id})
+    except Exception as e:
+        app.logger.exception('Error in add_expense')
+        return jsonify({"error": f"Expense record failed: {str(e)}"}), 500
+    finally:
+        if conn:
+            conn.close()
 
 # ----------------------------------------------------
 # 8. STAFF & NOTICES API
