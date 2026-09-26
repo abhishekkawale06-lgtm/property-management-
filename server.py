@@ -3,6 +3,7 @@ from flask_cors import CORS
 from pg_wrapper import get_db
 import os
 import uuid
+import secrets
 from datetime import datetime, timedelta
 import jwt
 from functools import wraps
@@ -17,11 +18,25 @@ from google.auth.transport import requests as google_requests
 load_dotenv()
 
 app = Flask(__name__, static_folder='.')
-CORS(app)
+allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        'CORS_ORIGINS',
+        'http://localhost:8000,http://127.0.0.1:8000'
+    ).split(',')
+    if origin.strip()
+]
+CORS(app, origins=allowed_origins)
 
-app.config['SECRET_KEY'] = os.environ.get('JWT_SECRET', 'fallback-dev-secret-change-in-prod')
+secret_key = os.environ.get('JWT_SECRET')
+if not secret_key:
+    if os.environ.get('FLASK_ENV') == 'production':
+        raise RuntimeError('JWT_SECRET must be configured in production')
+    secret_key = secrets.token_urlsafe(32)
+app.config['SECRET_KEY'] = secret_key
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['SECURE_UPLOAD_FOLDER'] = 'secure_uploads'
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['SECURE_UPLOAD_FOLDER'], exist_ok=True)
 
@@ -35,12 +50,14 @@ def verify_token():
         auth_header = request.headers.get('Authorization')
         if not auth_header or not auth_header.startswith('Bearer '):
             return jsonify({'error': 'Token is missing'}), 401
-        token = auth_header.split(' ')[1]
+        token = auth_header.split(' ', 1)[1].strip()
+        if not token:
+            return jsonify({'error': 'Token is missing'}), 401
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
             request.current_user_id = data.get('user_id')
             request.current_user_role = data.get('role', 'Viewer')
-        except Exception:
+        except jwt.PyJWTError:
             return jsonify({'error': 'Token is invalid'}), 401
 
 @app.errorhandler(404)
@@ -55,7 +72,8 @@ def method_not_allowed(e):
 
 @app.errorhandler(500)
 def internal_error(e):
-    return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+    app.logger.exception('Unhandled server error')
+    return jsonify({'error': 'Internal server error'}), 500
 
 def get_current_user():
     """Returns (user_id, role, list_of_property_ids) for the logged-in user."""
@@ -203,11 +221,21 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
     if file:
         filename = secure_filename(file.filename)
-        unique_filename = f"{uuid.uuid4().hex}_{filename}"
+        if not filename:
+            return jsonify({'error': 'Invalid file name'}), 400
+        extension = os.path.splitext(filename)[1].lower()
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.webp', '.pdf'}
+        if extension not in allowed_extensions:
+            return jsonify({'error': 'Unsupported file type'}), 415
+        unique_filename = f"{uuid.uuid4().hex}{extension}"
         
         try:
             from supabase import create_client
-            supabase = create_client(os.environ.get('SUPABASE_URL'), os.environ.get('SUPABASE_KEY'))
+            supabase_url = os.environ.get('SUPABASE_URL')
+            supabase_key = os.environ.get('SUPABASE_KEY')
+            if not supabase_url or not supabase_key:
+                return jsonify({'error': 'File storage is not configured'}), 503
+            supabase = create_client(supabase_url, supabase_key)
             file_bytes = file.read()
             bucket = 'secure-uploads' if is_secure else 'uploads'
             supabase.storage.from_(bucket).upload(
@@ -215,10 +243,14 @@ def upload_file():
                 file=file_bytes,
                 file_options={"content-type": file.content_type or 'application/octet-stream'}
             )
-            public_url = supabase.storage.from_(bucket).get_public_url(unique_filename)
-            return jsonify({'success': True, 'fileUrl': public_url, 'isSecure': is_secure})
+            if is_secure:
+                file_url = f"/api/secure-file?path={unique_filename}"
+            else:
+                file_url = supabase.storage.from_(bucket).get_public_url(unique_filename)
+            return jsonify({'success': True, 'fileUrl': file_url, 'isSecure': is_secure})
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            app.logger.exception('File upload failed')
+            return jsonify({'error': 'File upload failed'}), 500
 
 @app.route('/api/secure-file', methods=['GET'])
 def get_secure_file():
@@ -235,7 +267,7 @@ def get_secure_file():
         signed = supabase.storage.from_('secure-uploads').create_signed_url(filename, 60)
         from flask import redirect
         return redirect(signed['signedURL'])
-    except Exception as e:
+    except Exception:
         return jsonify({'error': 'File not found'}), 404
 
 @app.route('/api/export/residents', methods=['GET'])
@@ -639,34 +671,51 @@ def transfer_resident(res_id):
     if not new_room_id or not new_bed_id:
         return jsonify({"error": "Target room and bed are required"}), 400
 
-    conn = get_db()
-    res = conn.execute('SELECT * FROM residents WHERE id = ?', (res_id,)).fetchone()
-    if not res:
-        conn.close()
-        return jsonify({"error": "Resident not found"}), 404
+    conn = None
+    try:
+        conn = get_db()
+        res = conn.execute('SELECT * FROM residents WHERE id = ?', (res_id,)).fetchone()
+        if not res:
+            return jsonify({"error": "Resident not found"}), 404
 
-    old_bed_id = res['bedId']
+        old_bed_id = res['bedId']
 
-    # Verify new bed is available
-    new_bed = conn.execute('SELECT * FROM beds WHERE id = ?', (new_bed_id,)).fetchone()
-    if not new_bed or new_bed['status'] == 'Occupied':
-        conn.close()
-        return jsonify({"error": "Target bed is already occupied or does not exist"}), 400
+        # Verify new bed is available
+        new_bed = conn.execute('SELECT * FROM beds WHERE id = ?', (new_bed_id,)).fetchone()
+        if not new_bed:
+            return jsonify({"error": "Target bed does not exist"}), 400
+        if new_bed['status'] == 'Occupied':
+            return jsonify({"error": "Target bed is already occupied"}), 400
 
-    # 1. Release old bed to Available
-    if old_bed_id:
-        conn.execute('UPDATE beds SET status = "Available", residentId = NULL WHERE id = ?', (old_bed_id,))
+        new_property_id = new_bed.get('propertyId') or new_bed.get('propertyid')
 
-    # 2. Occupy new bed
-    conn.execute('UPDATE beds SET status = "Occupied", residentId = ? WHERE id = ?', (res_id, new_bed_id))
+        # 1. Release old bed to Available
+        if old_bed_id:
+            conn.execute(
+                "UPDATE beds SET status = 'Available', residentId = NULL WHERE id = ?",
+                (old_bed_id,)
+            )
 
-    # 3. Update resident record
-    conn.execute('UPDATE residents SET roomId = ?, bedId = ?, propertyId = ? WHERE id = ?',
-                 (new_room_id, new_bed_id, new_bed['propertyId'], res_id))
+        # 2. Occupy new bed
+        conn.execute(
+            'UPDATE beds SET status = \'Occupied\', residentId = ? WHERE id = ?',
+            (res_id, new_bed_id)
+        )
 
-    conn.commit()
-    conn.close()
-    return jsonify({"success": True})
+        # 3. Update resident record
+        conn.execute(
+            'UPDATE residents SET roomId = ?, bedId = ?, propertyId = ? WHERE id = ?',
+            (new_room_id, new_bed_id, new_property_id, res_id)
+        )
+
+        conn.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.exception('Error in transfer_resident')
+        return jsonify({"error": f"Transfer failed: {str(e)}"}), 500
+    finally:
+        if conn:
+            conn.close()
 
 # Business Rule #3 & Section 10: Resident Checkout workflow
 @app.route('/api/residents/<res_id>/checkout', methods=['POST'])
@@ -679,42 +728,55 @@ def checkout_resident(res_id):
     damage_deduction = int(data.get('damageDeduction', 0))
     remarks = data.get('remarks', 'Standard checkout completed.')
 
-    conn = get_db()
-    res = conn.execute('SELECT * FROM residents WHERE id = ?', (res_id,)).fetchone()
-    if not res:
-        conn.close()
-        return jsonify({"error": "Resident not found"}), 404
+    conn = None
+    try:
+        conn = get_db()
+        res = conn.execute('SELECT * FROM residents WHERE id = ?', (res_id,)).fetchone()
+        if not res:
+            return jsonify({"error": "Resident not found"}), 404
 
-    deposit_amount = res['securityDeposit']
-    total_deductions = pending_dues + other_dues + damage_deduction
-    deposit_refunded = max(0, deposit_amount - total_deductions)
-    final_settlement = deposit_refunded
+        deposit_amount = res['securityDeposit']
+        total_deductions = pending_dues + other_dues + damage_deduction
+        deposit_refunded = max(0, deposit_amount - total_deductions)
+        final_settlement = deposit_refunded
 
-    chk_id = f"chk_{uuid.uuid4().hex[:8]}"
+        chk_id = f"chk_{uuid.uuid4().hex[:8]}"
 
-    # Record checkout
-    conn.execute('''INSERT INTO checkouts 
-        (id, residentId, propertyId, roomId, bedId, noticeDate, checkoutDate, 
-         pendingDues, otherDues, damageDeduction, depositAmount, depositRefunded, finalSettlement, status, remarks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Completed', ?)''',
-        (chk_id, res_id, res['propertyId'], res['roomId'], res['bedId'], notice_date, checkout_date,
-         pending_dues, other_dues, damage_deduction, deposit_amount, deposit_refunded, final_settlement, remarks))
+        prop_id = res.get('propertyId') or res.get('propertyid')
+        room_id = res.get('roomId') or res.get('roomid')
+        bed_id = res.get('bedId') or res.get('bedid')
 
-    # Mark resident as Checked Out
-    conn.execute('UPDATE residents SET status = "Checked Out" WHERE id = ?', (res_id,))
+        # Record checkout
+        conn.execute('''INSERT INTO checkouts 
+            (id, residentId, propertyId, roomId, bedId, noticeDate, checkoutDate, 
+             pendingDues, otherDues, damageDeduction, depositAmount, depositRefunded, finalSettlement, status, remarks)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Completed', ?)''',
+            (chk_id, res_id, prop_id, room_id, bed_id, notice_date, checkout_date,
+             pending_dues, other_dues, damage_deduction, deposit_amount, deposit_refunded, final_settlement, remarks))
 
-    # Automatically revert Bed to Available
-    if res['bedId']:
-        conn.execute('UPDATE beds SET status = "Available", residentId = NULL WHERE id = ?', (res['bedId'],))
+        # Mark resident as Checked Out
+        conn.execute("UPDATE residents SET status = 'Checked Out' WHERE id = ?", (res_id,))
 
-    conn.commit()
-    conn.close()
-    return jsonify({
-        "success": True,
-        "checkoutId": chk_id,
-        "depositRefunded": deposit_refunded,
-        "finalSettlement": final_settlement
-    })
+        # Automatically revert Bed to Available
+        if bed_id:
+            conn.execute(
+                "UPDATE beds SET status = 'Available', residentId = NULL WHERE id = ?",
+                (bed_id,)
+            )
+
+        conn.commit()
+        return jsonify({
+            "success": True,
+            "checkoutId": chk_id,
+            "depositRefunded": deposit_refunded,
+            "finalSettlement": final_settlement
+        })
+    except Exception as e:
+        app.logger.exception('Error in checkout_resident')
+        return jsonify({"error": f"Checkout failed: {str(e)}"}), 500
+    finally:
+        if conn:
+            conn.close()
 
 # ----------------------------------------------------
 # 4. LEADS & ENQUIRIES API
@@ -1262,13 +1324,18 @@ def get_analytics_summary():
     maintenance_beds = sum(1 for b in beds if b['status'] == 'Maintenance')
     occupancy_rate = round((occupied_beds / total_beds * 100)) if total_beds > 0 else 0
 
-    # 3. Revenue & Collections (Current Month: 2026-09)
-    current_month = '2026-09'
-    month_filter = f" WHERE month = '{current_month}'"
+    # 3. Revenue & Collections
+    current_month = datetime.today().strftime('%Y-%m')
+    month_filter = " WHERE month = ?"
+    month_params = [current_month]
     if prop_id and prop_id != 'all':
-        month_filter += f" AND propertyId = '{prop_id}'"
+        month_filter += " AND propertyId = ?"
+        month_params.append(prop_id)
 
-    payments_month = conn.execute(f"SELECT amountExpected, amountPaid, status FROM payments{month_filter}").fetchall()
+    payments_month = conn.execute(
+        f"SELECT amountExpected, amountPaid, status FROM payments{month_filter}",
+        month_params
+    ).fetchall()
     rent_expected = sum(p['amountExpected'] for p in payments_month)
     rent_collected = sum(p['amountPaid'] for p in payments_month)
     rent_pending = max(0, rent_expected - rent_collected)
@@ -1278,10 +1345,15 @@ def get_analytics_summary():
     all_time_rev = conn.execute(f"SELECT COALESCE(SUM(amountPaid), 0) FROM payments{p_filter}", p_params).fetchone()[0]
 
     # 4. Total Expenses (Current Month & All Time)
-    exp_month_filter = f" WHERE date LIKE '{current_month}%'"
+    exp_month_filter = " WHERE date LIKE ?"
+    exp_month_params = [f"{current_month}%"]
     if prop_id and prop_id != 'all':
-        exp_month_filter += f" AND propertyId = '{prop_id}'"
-    month_expenses = conn.execute(f"SELECT COALESCE(SUM(amount), 0) FROM expenses{exp_month_filter}").fetchone()[0]
+        exp_month_filter += " AND propertyId = ?"
+        exp_month_params.append(prop_id)
+    month_expenses = conn.execute(
+        f"SELECT COALESCE(SUM(amount), 0) FROM expenses{exp_month_filter}",
+        exp_month_params
+    ).fetchone()[0]
     total_expenses = conn.execute(f"SELECT COALESCE(SUM(amount), 0) FROM expenses{p_filter}", p_params).fetchone()[0]
 
     # 5. Net Profit & Margin
@@ -1290,17 +1362,32 @@ def get_analytics_summary():
     profit_margin = round((net_profit_month / rent_collected * 100)) if rent_collected > 0 else 0
 
     # 6. Monthly Trend over last 4 months
-    months = ['2026-06', '2026-07', '2026-08', '2026-09']
+    current_date = datetime.today()
+    month_index = current_date.year * 12 + current_date.month - 1
+    months = []
+    for offset in range(3, -1, -1):
+        index = month_index - offset
+        months.append(f"{index // 12:04d}-{index % 12 + 1:02d}")
     monthly_trends = []
     for m in months:
-        m_filter = f" WHERE month = '{m}'"
-        e_filter = f" WHERE date LIKE '{m}%'"
+        m_filter = " WHERE month = ?"
+        m_params = [m]
+        e_filter = " WHERE date LIKE ?"
+        e_params = [f"{m}%"]
         if prop_id and prop_id != 'all':
-            m_filter += f" AND propertyId = '{prop_id}'"
-            e_filter += f" AND propertyId = '{prop_id}'"
+            m_filter += " AND propertyId = ?"
+            m_params.append(prop_id)
+            e_filter += " AND propertyId = ?"
+            e_params.append(prop_id)
 
-        rev = conn.execute(f"SELECT COALESCE(SUM(amountPaid), 0) FROM payments{m_filter}").fetchone()[0]
-        exp = conn.execute(f"SELECT COALESCE(SUM(amount), 0) FROM expenses{e_filter}").fetchone()[0]
+        rev = conn.execute(
+            f"SELECT COALESCE(SUM(amountPaid), 0) FROM payments{m_filter}",
+            m_params
+        ).fetchone()[0]
+        exp = conn.execute(
+            f"SELECT COALESCE(SUM(amount), 0) FROM expenses{e_filter}",
+            e_params
+        ).fetchone()[0]
         monthly_trends.append({
             "month": m,
             "revenue": rev,
